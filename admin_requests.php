@@ -1,0 +1,117 @@
+<?php
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/response.php';
+require_once __DIR__ . '/auth.php';
+
+header('Content-Type: application/json; charset=UTF-8');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization');
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit;
+}
+
+$admin = requireAuthenticatedAdmin($pdo);
+
+// GET: Retrieve all requests
+if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    $filterStatus = trim((string)($_GET['status'] ?? ''));
+    try {
+        $sql = "SELECT sr.id, sr.student_id, sr.title, sr.department, sr.reference_number,
+                       sr.status, sr.status_message, sr.category, sr.assigned_to, sr.updated_at, sr.created_at,
+                       s.first_name || ' ' || s.last_name as student_name, s.course, s.year_level
+                FROM student_requests sr
+                LEFT JOIN students s ON sr.student_id = s.student_id";
+        $params = [];
+
+        if ($filterStatus !== '' && strtolower($filterStatus) !== 'all') {
+            $sql .= " WHERE sr.status ILIKE ?";
+            $params[] = "%{$filterStatus}%";
+        }
+
+        $sql .= " ORDER BY sr.id DESC";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        jsonResponse(true, 'Student requests queue retrieved.', $requests);
+    } catch (\PDOException $e) {
+        error_log('Admin requests GET error: ' . $e->getMessage());
+        jsonResponse(false, 'Unable to query requests queue.', null, 500);
+    }
+}
+
+// POST: Update request status and tracking note
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $rawInput = file_get_contents('php://input');
+    $data = json_decode($rawInput, true);
+    if (!is_array($data) || empty($data)) {
+        $data = $_POST;
+    }
+
+    $requestId     = isset($data['request_id']) ? (int)$data['request_id'] : 0;
+    $status        = trim((string)($data['status'] ?? 'Processing'));
+    $statusMessage = trim((string)($data['status_message'] ?? ''));
+    $assignedTo    = trim((string)($data['assigned_to'] ?? ($admin['full_name'] ?: $admin['username'])));
+
+    if ($requestId <= 0) {
+        jsonResponse(false, 'Valid request_id is required.', null, 422);
+    }
+
+    try {
+        $findStmt = $pdo->prepare('SELECT id, student_id, title, reference_number FROM student_requests WHERE id = ?');
+        $findStmt->execute([$requestId]);
+        $req = $findStmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$req) {
+            jsonResponse(false, 'Request record not found.', null, 404);
+        }
+
+        $updateStmt = $pdo->prepare(
+            'UPDATE student_requests
+             SET status = :status,
+                 status_message = :status_message,
+                 assigned_to = :assigned_to,
+                 updated_at = NOW()
+             WHERE id = :id'
+        );
+        $updateStmt->execute([
+            ':status'         => $status,
+            ':status_message' => $statusMessage,
+            ':assigned_to'    => $assignedTo,
+            ':id'             => $requestId
+        ]);
+
+        // Dispatches notification to student so it appears on Android
+        $notifStmt = $pdo->prepare(
+            'INSERT INTO student_notifications (student_id, title, body, category, status_tag, is_unread, created_at)
+             VALUES (?, ?, ?, ?, ?, TRUE, NOW())'
+        );
+        $notifTitle = "Request Update: {$req['title']}";
+        $notifBody  = "Status changed to: {$status}." . ($statusMessage ? " Note: {$statusMessage}" : " Reference: {$req['reference_number']}");
+        $notifStmt->execute([
+            $req['student_id'],
+            $notifTitle,
+            $notifBody,
+            'Request',
+            $status === 'Ready for Pickup' ? 'Action' : 'Notice'
+        ]);
+
+        jsonResponse(true, 'Request status updated and notification dispatched.', [
+            'request_id' => $requestId,
+            'status'     => $status,
+            'updated_at' => date('Y-m-d H:i:s')
+        ]);
+    } catch (\PDOException $e) {
+        error_log('Admin requests POST error: ' . $e->getMessage());
+        jsonResponse(false, 'Unable to update request status.', null, 500);
+    }
+}
+
+jsonResponse(false, 'Method Not Allowed.', null, 405);
