@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS student_documents (
     mime_type VARCHAR(50) NOT NULL,
     file_size_bytes INT NOT NULL,
     status VARCHAR(30) DEFAULT 'Pending Review',
+    reviewed_by VARCHAR(100),
+    reviewed_at TIMESTAMP WITH TIME ZONE,
+    admin_notes TEXT,
     uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -55,6 +58,8 @@ CREATE TABLE IF NOT EXISTS student_requests (
     status VARCHAR(50) DEFAULT 'Processing',
     status_message TEXT,
     category VARCHAR(50) DEFAULT 'Document',
+    assigned_to VARCHAR(100),
+    updated_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -70,6 +75,9 @@ CREATE TABLE IF NOT EXISTS scholarship_applications (
     application_type VARCHAR(50) NOT NULL,
     status VARCHAR(50) DEFAULT 'Under Review',
     tracking_ref VARCHAR(50) NOT NULL,
+    reviewed_by VARCHAR(100),
+    reviewed_at TIMESTAMP WITH TIME ZONE,
+    admin_notes TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -178,7 +186,7 @@ VALUES (
     'Clara',
     'Santos',
     'student@swu.edu.ph',
-    '$2y$10$wTf3rDvy0V3fQc0k9fM7UeYl4Y3G6gB8kR5H2uJ1sK0qO8xXm1wTu', -- bcrypt hash for 'student123'
+    '$2y$10$K9mYTxhYP8dT2KHMOo9HA.NIWZpGnmkamuhQhlWIZ3dxKz9QPDWsW', -- valid bcrypt hash for 'student123'
     'BS Computer Science',
     '3rd Year',
     'Active',

@@ -30,8 +30,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
         $unreadCount = 0;
         foreach ($notifications as &$n) {
-            $n['is_unread'] = (bool)$n['is_unread'];
-            if ($n['is_unread']) {
+            $rawUnread = $n['is_unread'];
+            $isUnread = ($rawUnread === true || $rawUnread === 1 || $rawUnread === '1' || $rawUnread === 't' || $rawUnread === 'true');
+            $n['is_unread'] = $isUnread;
+            if ($isUnread) {
                 $unreadCount++;
             }
         }

@@ -25,7 +25,7 @@ $status   = trim((string)($_GET['status'] ?? ''));
 try {
     $sql = 'SELECT id, student_id, first_name, middle_name, last_name, email,
                    course, year_level, academic_status, requirements_progress,
-                   verified_docs_count, total_docs_count, pending_actions_count, role, created_at
+                   verified_docs_count, total_docs_count, pending_actions_count, created_at
             FROM students
             WHERE 1=1';
     $params = [];
