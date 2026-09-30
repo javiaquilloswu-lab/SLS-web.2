@@ -24,13 +24,11 @@ if (!is_array($data) || empty($data)) {
 
 $userMessage = trim((string)($data['message'] ?? ''));
 $history     = is_array($data['history'] ?? null) ? $data['history'] : [];
+$action      = trim((string)($data['action'] ?? 'chat')); // 'chat' or 'create_concern'
 
 if ($userMessage === '') {
     jsonResponse(false, 'Message cannot be empty.', null, 422);
 }
-
-// Generate an official Student Life tracking ticket number
-$ticketRef = 'SL-2026-' . str_pad((string)random_int(100, 9999), 6, '0', STR_PAD_LEFT);
 
 $replyText = '';
 $modelUsed = 'SWU Student Affairs Knowledge Engine';
@@ -43,11 +41,11 @@ if (!empty($apiKey) && function_exists('curl_init')) {
         . "You are assisting student {$firstName} (ID: {$studentId}) with academic appeals, scholarship renewals (CHED CMSP), "
         . "official document requests (COC, Certificate of Grades, Good Moral), lost RFID student IDs, and campus counseling. "
         . "Always be professional, reassuring, clear, and concise. Address the student respectfully. "
-        . "If the student describes an urgent appeal or grievance, acknowledge it and reference tracking ticket #{$ticketRef}.";
+        . "Provide accurate guidance based on official SWU PHINMA Student Life policies.";
 
     $contents = [];
     foreach ($history as $h) {
-        $sender = ($h['sender'] ?? '') === 'bot' ? 'model' : 'user';
+        $sender = ($h['sender'] ?? '') === 'bot' || ($h['sender'] ?? '') === 'model' ? 'model' : 'user';
         $text = trim((string)($h['text'] ?? ''));
         if ($text !== '') {
             $contents[] = [
@@ -73,6 +71,7 @@ if (!empty($apiKey) && function_exists('curl_init')) {
         ]
     ];
 
+    // Attempt Gemini API call (gemini-2.0-flash / gemini-3.8-flash endpoint)
     $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" . urlencode($apiKey);
 
     $ch = curl_init($url);
@@ -100,45 +99,71 @@ if (!empty($apiKey) && function_exists('curl_init')) {
 if ($replyText === '') {
     $lowerMsg = strtolower($userMessage);
     if (strpos($lowerMsg, 'appeal') !== false || strpos($lowerMsg, 'grade') !== false) {
-        $replyText = "Thank you {$firstName}. Your academic appeal regarding grade evaluation has been officially logged with reference {$ticketRef}. It has been forwarded to the Dean of Student Affairs for immediate bursar review. You will receive an update in your notifications within 24-48 business hours.";
+        $replyText = "For academic appeals regarding grade evaluation, certified Grade Slips must be submitted to the Office of the Dean of Student Affairs. Official appeals take 2-3 business days for bursar evaluation.";
     } elseif (strpos($lowerMsg, 'scholarship') !== false || strpos($lowerMsg, 'ched') !== false) {
-        $replyText = "For CHED Academic Excellence renewals, ensure your Certificate of Grades (COG) with minimum 1.35 GWA and the signed Scholarship Agreement are uploaded before the August 25, 2026 cutoff. Reference {$ticketRef} has been recorded for your inquiry.";
+        $replyText = "For CHED Academic Excellence renewals, ensure your Certificate of Grades (COG) with minimum 1.35 GWA and signed Scholarship Agreement are uploaded in your Student Portal before the cutoff.";
     } elseif (strpos($lowerMsg, 'moral') !== false || strpos($lowerMsg, 'coc') !== false || strpos($lowerMsg, 'transcript') !== false) {
-        $replyText = "Document request recorded. Good Moral certificates and Certificates of Completion (COC) require 1-3 business days processing by the Registrar Office. Digital QR clearance will be available in your Student Life portal.";
+        $replyText = "Good Moral certificates and Certificates of Completion (COC) require 1-3 business days processing by the Registrar Office. Digital QR clearance will be available in your Student Life portal.";
     } elseif (strpos($lowerMsg, 'id') !== false || strpos($lowerMsg, 'lost') !== false) {
         $replyText = "For Lost ID replacements, please submit an affidavit of loss or request re-printing through Document Requests. Replacement smart cards carry a ₱150 fee and take 3-5 business days.";
     } else {
-        $replyText = "Thank you for reaching out to the Student Life Support Office, {$firstName}. Your concern has been documented under tracking ticket {$ticketRef}. A student support officer or guidance counselor will review your inquiry shortly.";
+        $replyText = "Thank you for reaching out to the Student Life Support Office, {$firstName}. You can ask me questions about scholarship renewals, document requests, lost IDs, or academic clearance procedures.";
     }
 }
 
-// Save concern record and transcript turns in PostgreSQL for the authenticated student
+// Persist conversation turns in PostgreSQL student_concern_messages for history tracking
 try {
-    $stmt = $pdo->prepare(
-        'INSERT INTO student_concerns (student_id, ticket_ref, message, response, status, created_at)
-         VALUES (?, ?, ?, ?, ?, NOW())
-         RETURNING id'
-    );
-    $stmt->execute([$studentId, $ticketRef, $userMessage, $replyText, 'Open']);
-    $concernId = $stmt->fetchColumn();
-
-    if ($concernId) {
-        // Insert normalized multi-turn records
-        $msgStmt = $pdo->prepare(
-            'INSERT INTO student_concern_messages (concern_id, ticket_ref, sender_type, sender_id, sender_name, message, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, NOW())'
+    // If student explicitly requested creating an official support concern
+    if ($action === 'create_concern') {
+        $ticketRef = 'SL-2026-' . str_pad((string)random_int(100, 9999), 6, '0', STR_PAD_LEFT);
+        $stmt = $pdo->prepare(
+            'INSERT INTO student_concerns (student_id, ticket_ref, message, response, status, created_at)
+             VALUES (?, ?, ?, ?, ?, NOW())
+             RETURNING id'
         );
-        $msgStmt->execute([(int)$concernId, $ticketRef, 'STUDENT', $studentId, $firstName, $userMessage]);
-        $msgStmt->execute([(int)$concernId, $ticketRef, 'AI', 'SWU AI Assistant', 'AI Student Life Assistant', $replyText]);
+        $stmt->execute([$studentId, $ticketRef, $userMessage, $replyText, 'Open']);
+        $concernId = $stmt->fetchColumn();
+
+        if ($concernId) {
+            $msgStmt = $pdo->prepare(
+                'INSERT INTO student_concern_messages (concern_id, ticket_ref, student_id, sender_type, sender_id, sender_name, message, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, NOW())'
+            );
+            $msgStmt->execute([(int)$concernId, $ticketRef, $studentId, 'STUDENT', $studentId, $firstName, $userMessage]);
+            $msgStmt->execute([(int)$concernId, $ticketRef, $studentId, 'AI', 'SWU AI Assistant', 'AI Student Life Assistant', $replyText]);
+        }
+
+        jsonResponse(true, 'Official support concern created successfully.', [
+            'reply'       => $replyText,
+            'ticket_ref'  => $ticketRef,
+            'time'        => 'Just now',
+            'model_used'  => $modelUsed,
+            'timestamp'   => date('g:i A')
+        ]);
+    } else {
+        // Normal AI conversation turn: Persist in student_concern_messages WITHOUT creating an official concern ticket
+        $msgStmt = $pdo->prepare(
+            'INSERT INTO student_concern_messages (concern_id, ticket_ref, student_id, sender_type, sender_id, sender_name, message, created_at)
+             VALUES (NULL, NULL, ?, ?, ?, ?, ?, NOW())'
+        );
+        $msgStmt->execute([$studentId, 'STUDENT', $studentId, $firstName, $userMessage]);
+        $msgStmt->execute([$studentId, 'AI', 'SWU AI Assistant', 'AI Student Life Assistant', $replyText]);
+
+        jsonResponse(true, 'AI response generated successfully.', [
+            'reply'      => $replyText,
+            'time'       => 'Just now',
+            'model_used' => $modelUsed,
+            'timestamp'  => date('g:i A')
+        ]);
     }
 } catch (\PDOException $e) {
-    error_log('Failed to log student concern: ' . $e->getMessage());
-}
+    error_log('Failed to log conversation turn: ' . $e->getMessage());
 
-jsonResponse(true, 'Support response generated successfully.', [
-    'reply'       => $replyText,
-    'ticket_ref'  => $ticketRef,
-    'time'        => 'Just now',
-    'model_used'  => $modelUsed,
-    'timestamp'   => date('g:i A')
-]);
+    // Still return the generated AI reply even if conversation logging fails
+    jsonResponse(true, 'AI response generated successfully.', [
+        'reply'      => $replyText,
+        'time'       => 'Just now',
+        'model_used' => $modelUsed,
+        'timestamp'  => date('g:i A')
+    ]);
+}

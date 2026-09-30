@@ -47,7 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     }
 }
 
-// POST: Update request status and tracking note
+// POST: Update request status or create service type
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $rawInput = file_get_contents('php://input');
     $data = json_decode($rawInput, true);
@@ -55,62 +55,98 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $data = $_POST;
     }
 
-    $requestId     = isset($data['request_id']) ? (int)$data['request_id'] : 0;
-    $status        = trim((string)($data['status'] ?? 'Processing'));
-    $statusMessage = trim((string)($data['status_message'] ?? ''));
-    $assignedTo    = trim((string)($data['assigned_to'] ?? ($admin['full_name'] ?: $admin['username'])));
+    $action = trim((string)($data['action'] ?? 'update_status'));
 
-    if ($requestId <= 0) {
-        jsonResponse(false, 'Valid request_id is required.', null, 422);
-    }
+    if ($action === 'create_service') {
+        $srvCode   = trim((string)($data['service_code'] ?? ''));
+        $srvName   = trim((string)($data['service_name'] ?? ''));
+        $desc      = trim((string)($data['description'] ?? ''));
+        $dept      = trim((string)($data['department'] ?? 'University Registrar'));
+        $cat       = trim((string)($data['category'] ?? 'Document'));
+        $procDays  = trim((string)($data['processing_days'] ?? '2-3 Business Days'));
+        $feeAmt    = trim((string)($data['fee_amount'] ?? 'Free / Digital'));
+        $isActive  = isset($data['is_active']) ? (bool)$data['is_active'] : true;
 
-    try {
-        $findStmt = $pdo->prepare('SELECT id, student_id, title, reference_number FROM student_requests WHERE id = ?');
-        $findStmt->execute([$requestId]);
-        $req = $findStmt->fetch(PDO::FETCH_ASSOC);
-
-        if (!$req) {
-            jsonResponse(false, 'Request record not found.', null, 404);
+        if ($srvCode === '' || $srvName === '') {
+            jsonResponse(false, 'Service code and service name are required.', null, 422);
         }
 
-        $updateStmt = $pdo->prepare(
-            'UPDATE student_requests
-             SET status = :status,
-                 status_message = :status_message,
-                 assigned_to = :assigned_to,
-                 updated_at = NOW()
-             WHERE id = :id'
-        );
-        $updateStmt->execute([
-            ':status'         => $status,
-            ':status_message' => $statusMessage,
-            ':assigned_to'    => $assignedTo,
-            ':id'             => $requestId
-        ]);
+        try {
+            $stmt = $pdo->prepare(
+                'INSERT INTO service_types (service_code, service_name, description, department, category, processing_days, fee_amount, is_active, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                 RETURNING id'
+            );
+            $stmt->execute([$srvCode, $srvName, $desc, $dept, $cat, $procDays, $feeAmt, $isActive ? 1 : 0]);
+            $newId = $stmt->fetchColumn();
 
-        // Dispatches notification to student so it appears on Android
-        $notifStmt = $pdo->prepare(
-            'INSERT INTO student_notifications (student_id, title, body, category, status_tag, is_unread, created_at)
-             VALUES (?, ?, ?, ?, ?, TRUE, NOW())'
-        );
-        $notifTitle = "Request Update: {$req['title']}";
-        $notifBody  = "Status changed to: {$status}." . ($statusMessage ? " Note: {$statusMessage}" : " Reference: {$req['reference_number']}");
-        $notifStmt->execute([
-            $req['student_id'],
-            $notifTitle,
-            $notifBody,
-            'Request',
-            $status === 'Ready for Pickup' ? 'Action' : 'Notice'
-        ]);
+            jsonResponse(true, 'Service type created successfully in catalog.', [
+                'id'           => (int)$newId,
+                'service_code' => $srvCode,
+                'service_name' => $srvName
+            ], 201);
+        } catch (\PDOException $e) {
+            error_log('Admin service creation error: ' . $e->getMessage());
+            jsonResponse(false, 'Unable to create service type. Code may already exist.', null, 409);
+        }
+    } else {
+        $requestId     = isset($data['request_id']) ? (int)$data['request_id'] : 0;
+        $status        = trim((string)($data['status'] ?? 'Processing'));
+        $statusMessage = trim((string)($data['status_message'] ?? ''));
+        $assignedTo    = trim((string)($data['assigned_to'] ?? ($admin['full_name'] ?: $admin['username'])));
 
-        jsonResponse(true, 'Request status updated and notification dispatched.', [
-            'request_id' => $requestId,
-            'status'     => $status,
-            'updated_at' => date('Y-m-d H:i:s')
-        ]);
-    } catch (\PDOException $e) {
-        error_log('Admin requests POST error: ' . $e->getMessage());
-        jsonResponse(false, 'Unable to update request status.', null, 500);
+        if ($requestId <= 0) {
+            jsonResponse(false, 'Valid request_id is required.', null, 422);
+        }
+
+        try {
+            $findStmt = $pdo->prepare('SELECT id, student_id, title, reference_number FROM student_requests WHERE id = ?');
+            $findStmt->execute([$requestId]);
+            $req = $findStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$req) {
+                jsonResponse(false, 'Request record not found.', null, 404);
+            }
+
+            $updateStmt = $pdo->prepare(
+                'UPDATE student_requests
+                 SET status = :status,
+                     status_message = :status_message,
+                     assigned_to = :assigned_to,
+                     updated_at = NOW()
+                 WHERE id = :id'
+            );
+            $updateStmt->execute([
+                ':status'         => $status,
+                ':status_message' => $statusMessage,
+                ':assigned_to'    => $assignedTo,
+                ':id'             => $requestId
+            ]);
+
+            // Dispatches notification to student so it appears on Android
+            $notifStmt = $pdo->prepare(
+                'INSERT INTO student_notifications (student_id, title, body, category, status_tag, is_unread, created_at)
+                 VALUES (?, ?, ?, ?, ?, TRUE, NOW())'
+            );
+            $notifTitle = "Request Update: {$req['title']}";
+            $notifBody  = "Status changed to: {$status}." . ($statusMessage ? " Note: {$statusMessage}" : " Reference: {$req['reference_number']}");
+            $notifStmt->execute([
+                $req['student_id'],
+                $notifTitle,
+                $notifBody,
+                'Request',
+                $status === 'Ready for Pickup' ? 'Action' : 'Notice'
+            ]);
+
+            jsonResponse(true, 'Request status updated and notification dispatched.', [
+                'request_id' => $requestId,
+                'status'     => $status,
+                'updated_at' => date('Y-m-d H:i:s')
+            ]);
+        } catch (\PDOException $e) {
+            error_log('Admin requests POST error: ' . $e->getMessage());
+            jsonResponse(false, 'Unable to update request status.', null, 500);
+        }
     }
 }
 

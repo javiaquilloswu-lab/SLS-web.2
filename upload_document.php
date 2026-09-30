@@ -98,12 +98,22 @@ try {
     ]);
 
     $docId = $stmt->fetchColumn();
+
+    // Update matching scholarship_requirements status for this student to 'REVIEWING'
+    $updReq = $pdo->prepare(
+        "UPDATE scholarship_requirements
+         SET status = 'REVIEWING', updated_at = NOW()
+         WHERE student_id = ? AND (LOWER(title) LIKE LOWER(?) OR LOWER(?) LIKE LOWER('%' || title || '%'))"
+    );
+    $updReq->execute([$studentId, "%{$documentType}%", $documentType]);
+
     jsonResponse(true, 'File uploaded and logged successfully.', [
         'document_id'       => (int)$docId,
         'file_url'          => $publicUrlPath,
         'original_filename' => $originalName,
         'document_type'     => $documentType,
-        'file_size_bytes'   => $fileSizeBytes
+        'file_size_bytes'   => $fileSizeBytes,
+        'status'            => 'REVIEWING'
     ]);
 } catch (\PDOException $e) {
     error_log('Document upload failed: ' . $e->getMessage());

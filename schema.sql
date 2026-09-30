@@ -120,10 +120,29 @@ CREATE TABLE IF NOT EXISTS student_concerns (
     status VARCHAR(30) DEFAULT 'Open',
     responded_by VARCHAR(100),
     responded_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    internal_notes TEXT,
+    assigned_to VARCHAR(100),
+    escalation_reason TEXT,
+    is_ai_paused BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE
 );
 
 CREATE INDEX IF NOT EXISTS idx_concerns_student_id ON student_concerns(student_id);
+
+-- 7b. Student Concern Multi-Turn Messages Table
+CREATE TABLE IF NOT EXISTS student_concern_messages (
+    id SERIAL PRIMARY KEY,
+    concern_id INT NOT NULL REFERENCES student_concerns(id) ON DELETE CASCADE,
+    ticket_ref VARCHAR(50) NOT NULL,
+    sender_type VARCHAR(20) NOT NULL, -- 'STUDENT', 'AI', 'STAFF', 'SYSTEM'
+    sender_id VARCHAR(50),
+    sender_name VARCHAR(100) NOT NULL,
+    message TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_concern_msgs_ticket ON student_concern_messages(ticket_ref);
 
 -- 8. Student Authentication Sessions Table (Tokens)
 CREATE TABLE IF NOT EXISTS student_tokens (
@@ -151,6 +170,20 @@ CREATE TABLE IF NOT EXISTS scholarships (
 );
 
 CREATE INDEX IF NOT EXISTS idx_scholarships_code ON scholarships(code);
+
+-- 9b. Dynamic Service Types Catalog Table
+CREATE TABLE IF NOT EXISTS service_types (
+    id SERIAL PRIMARY KEY,
+    service_code VARCHAR(50) UNIQUE NOT NULL,
+    service_name VARCHAR(150) NOT NULL,
+    description TEXT,
+    department VARCHAR(100) DEFAULT 'University Registrar',
+    category VARCHAR(50) DEFAULT 'Document',
+    processing_days VARCHAR(50) DEFAULT '2-3 Business Days',
+    fee_amount VARCHAR(50) DEFAULT 'Free / Digital',
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
 
 -- 10. Administrator Users Table
 CREATE TABLE IF NOT EXISTS admin_users (

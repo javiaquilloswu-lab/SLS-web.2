@@ -23,18 +23,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $stmt->execute([$studentId]);
         $requirements = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        // Fetch active scholarship program info from scholarships table if available
+        // Fetch all active master scholarship programs
         $progStmt = $pdo->query(
             "SELECT code, title, description, academic_year, deadline, stipend_amount
              FROM scholarships
              WHERE is_active = TRUE
-             ORDER BY id ASC
-             LIMIT 1"
+             ORDER BY id ASC"
         );
-        $program = $progStmt ? $progStmt->fetch(PDO::FETCH_ASSOC) : null;
+        $allPrograms = $progStmt ? $progStmt->fetchAll(PDO::FETCH_ASSOC) : [];
+        $program = !empty($allPrograms) ? $allPrograms[0] : null;
 
         $programName = $program['title'] ?? 'CHED Academic Excellence (CMSP)';
-        $acadYear    = $program['academic_year'] ?? 'AY 2024–2025 • Mid-Year Renewal Cycle';
+        $acadYear    = $program['academic_year'] ?? 'AY 2026–2027 • Mid-Year Renewal Cycle';
         $deadline    = $program['deadline'] ?? 'August 25, 2026';
         $stipend     = $program['stipend_amount'] ?? '₱30,000.00';
 
@@ -68,7 +68,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             'total_count'          => $total,
             'requirements'         => $requirements,
             'stipend_amount'       => $stipend,
-            'next_critical_cutoff' => $deadline
+            'next_critical_cutoff' => $deadline,
+            'available_programs'   => $allPrograms
         ]);
     } catch (\PDOException $e) {
         error_log('Failed to fetch scholarship info: ' . $e->getMessage());
@@ -87,9 +88,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $programName = trim((string)($data['program_name'] ?? 'CHED Full Merit Scholarship Award (CMSP)'));
     $acadYear    = trim((string)($data['academic_year'] ?? '1st Semester, A.Y. 2024–2025'));
     $appType     = trim((string)($data['application_type'] ?? 'New Application'));
-    $refNumber   = 'SL-2026-' . str_pad((string)random_int(100, 9999), 6, '0', STR_PAD_LEFT);
+
+    if ($programName === '') {
+        jsonResponse(false, 'Scholarship program name is required.', null, 422);
+    }
 
     try {
+        // Enforce Duplicate Protection: Check if active application already exists under review/processing/approved for this program
+        $checkStmt = $pdo->prepare(
+            "SELECT id, tracking_ref FROM scholarship_applications
+             WHERE student_id = ? AND program_name = ? AND status IN ('Under Review', 'Processing', 'Approved')
+             LIMIT 1"
+        );
+        $checkStmt->execute([$studentId, $programName]);
+        $existing = $checkStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($existing) {
+            jsonResponse(false, "You already have an active application ({$existing['tracking_ref']}) for {$programName}.", null, 409);
+        }
+
+        $refNumber = 'SL-2026-' . str_pad((string)random_int(100, 9999), 6, '0', STR_PAD_LEFT);
+
         $stmt = $pdo->prepare(
             'INSERT INTO scholarship_applications (student_id, program_name, academic_year, application_type, status, tracking_ref, created_at)
              VALUES (?, ?, ?, ?, ?, ?, NOW())

@@ -75,7 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                  VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
                  RETURNING id'
             );
-            $stmt->execute([$code, $title, $desc, $acadYear, $deadline, $stipend, $isActive ? 'TRUE' : 'FALSE']);
+            $stmt->execute([$code, $title, $desc, $acadYear, $deadline, $stipend, $isActive ? 1 : 0]);
             $newId = $stmt->fetchColumn();
 
             jsonResponse(true, 'Scholarship program created successfully.', [
