@@ -1,38 +1,49 @@
-<?php
 
+<?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/db.php';
-require_once __DIR__ . '/response.php';
-
 header('Content-Type: application/json; charset=UTF-8');
-header('Access-Control-Allow-Origin: *');
+header('Cache-Control: no-store');
+
+if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
+    header('Allow: GET');
+    http_response_code(405);
+    echo json_encode([
+        'status' => 'error',
+        'message' => 'Method not allowed'
+    ]);
+    exit;
+}
 
 try {
-    $versionStmt = $pdo->query('SELECT version()');
-    $version = $versionStmt->fetchColumn();
+    require_once __DIR__ . '/db.php';
 
-    // Check table counts
-    $tables = ['admin_users', 'admin_tokens', 'students', 'student_tokens', 'student_documents', 'student_requests', 'scholarships', 'scholarship_applications', 'scholarship_requirements', 'student_notifications', 'student_concerns', 'student_concern_messages'];
-    $tableCounts = [];
-
-    foreach ($tables as $table) {
-        try {
-            $countStmt = $pdo->query("SELECT count(*) FROM {$table}");
-            $tableCounts[$table] = (int)$countStmt->fetchColumn();
-        } catch (PDOException $e) {
-            $tableCounts[$table] = 'Table not initialized yet';
-        }
+    if (!isset($pdo) || !($pdo instanceof PDO)) {
+        throw new RuntimeException('Database unavailable');
     }
 
-    jsonResponse(true, 'PostgreSQL connection successful!', [
-        'database' => getenv('DB_NAME') ?: ($_ENV['DB_NAME'] ?? 'android_studio_db'),
-        'host' => getenv('DB_HOST') ?: ($_ENV['DB_HOST'] ?? 'localhost'),
-        'port' => getenv('DB_PORT') ?: ($_ENV['DB_PORT'] ?? '5432'),
-        'server_version' => $version,
-        'table_counts' => $tableCounts,
-        'timestamp' => date('Y-m-d H:i:s T')
+    $stmt = $pdo->query('SELECT 1');
+    $connected = $stmt !== false && (int) $stmt->fetchColumn() === 1;
+
+    if (!$connected) {
+        throw new RuntimeException('Database check failed');
+    }
+
+    http_response_code(200);
+    echo json_encode([
+        'status' => 'ok',
+        'service' => 'Student Life API',
+        'database' => 'connected',
+        'timestamp' => gmdate('c')
     ]);
-} catch (PDOException $e) {
-    jsonResponse(false, 'PostgreSQL test query failed: ' . $e->getMessage(), null, 500);
+
+} catch (Throwable $e) {
+    error_log('API health check failed: ' . $e->getMessage());
+
+    http_response_code(503);
+    echo json_encode([
+        'status' => 'error',
+        'service' => 'Student Life API',
+        'database' => 'unavailable'
+    ]);
 }

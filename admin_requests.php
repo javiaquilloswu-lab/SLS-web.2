@@ -18,29 +18,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 $admin = requireAuthenticatedAdmin($pdo);
 
-// GET: Retrieve all requests
+// GET: Retrieve paginated student requests
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $filterStatus = trim((string)($_GET['status'] ?? ''));
+
+    $page  = max(1, (int)($_GET['page'] ?? 1));
+    $limit = max(1, min(100, (int)($_GET['limit'] ?? 20)));
+    $offset = ($page - 1) * $limit;
+
     try {
+        $whereSql = "";
+        $params = [];
+
+        if ($filterStatus !== '' && strtolower($filterStatus) !== 'all') {
+            $whereSql .= " WHERE sr.status ILIKE ?";
+            $params[] = "%{$filterStatus}%";
+        }
+
+        $countStmt = $pdo->prepare("SELECT COUNT(*) FROM student_requests sr {$whereSql}");
+        $countStmt->execute($params);
+        $totalRecords = (int)$countStmt->fetchColumn();
+        $totalPages = max(1, (int)ceil($totalRecords / $limit));
+
         $sql = "SELECT sr.id, sr.student_id, sr.title, sr.department, sr.reference_number,
                        sr.status, sr.status_message, sr.category, sr.assigned_to, sr.updated_at, sr.created_at,
                        s.first_name || ' ' || s.last_name as student_name, s.course, s.year_level
                 FROM student_requests sr
-                LEFT JOIN students s ON sr.student_id = s.student_id";
-        $params = [];
-
-        if ($filterStatus !== '' && strtolower($filterStatus) !== 'all') {
-            $sql .= " WHERE sr.status ILIKE ?";
-            $params[] = "%{$filterStatus}%";
-        }
-
-        $sql .= " ORDER BY sr.id DESC";
+                LEFT JOIN students s ON sr.student_id = s.student_id
+                {$whereSql}
+                ORDER BY sr.id DESC
+                LIMIT {$limit} OFFSET {$offset}";
 
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         $requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        jsonResponse(true, 'Student requests queue retrieved.', $requests);
+        jsonResponse(true, 'Student requests queue retrieved.', [
+            'requests'   => $requests,
+            'pagination' => [
+                'current_page'  => $page,
+                'per_page'      => $limit,
+                'total_records' => $totalRecords,
+                'total_pages'   => $totalPages,
+                'has_next'      => $page < $totalPages,
+                'has_prev'      => $page > 1
+            ]
+        ]);
     } catch (\PDOException $e) {
         error_log('Admin requests GET error: ' . $e->getMessage());
         jsonResponse(false, 'Unable to query requests queue.', null, 500);
@@ -61,6 +84,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $srvCode   = trim((string)($data['service_code'] ?? ''));
         $srvName   = trim((string)($data['service_name'] ?? ''));
         $desc      = trim((string)($data['description'] ?? ''));
+        $reqs      = is_array($data['requirements'] ?? null) ? json_encode($data['requirements'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : trim((string)($data['requirements'] ?? ''));
         $dept      = trim((string)($data['department'] ?? 'University Registrar'));
         $cat       = trim((string)($data['category'] ?? 'Document'));
         $procDays  = trim((string)($data['processing_days'] ?? '2-3 Business Days'));
@@ -73,11 +97,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         try {
             $stmt = $pdo->prepare(
-                'INSERT INTO service_types (service_code, service_name, description, department, category, processing_days, fee_amount, is_active, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                'INSERT INTO service_types (service_code, service_name, description, requirements, department, category, processing_days, fee_amount, is_active, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                  RETURNING id'
             );
-            $stmt->execute([$srvCode, $srvName, $desc, $dept, $cat, $procDays, $feeAmt, $isActive ? 1 : 0]);
+            $stmt->execute([$srvCode, $srvName, $desc, $reqs, $dept, $cat, $procDays, $feeAmt, $isActive ? 1 : 0]);
             $newId = $stmt->fetchColumn();
 
             jsonResponse(true, 'Service type created successfully in catalog.', [

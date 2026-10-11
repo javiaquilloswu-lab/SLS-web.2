@@ -143,7 +143,7 @@ try {
     } else {
         // Normal AI conversation turn: Persist in student_concern_messages WITHOUT creating an official concern ticket
         $msgStmt = $pdo->prepare(
-            'INSERT INTO student_concern_messages (concern_id, ticket_ref, student_id, sender_type, sender_id, sender_name, message, created_at)
+                'INSERT INTO student_concern_messages (concern_id, ticket_ref, student_id, sender_type, sender_id, sender_name, message, created_at)
              VALUES (NULL, NULL, ?, ?, ?, ?, ?, NOW())'
         );
         $msgStmt->execute([$studentId, 'STUDENT', $studentId, $firstName, $userMessage]);

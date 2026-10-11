@@ -15,7 +15,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 
 try {
     $stmt = $pdo->query(
-        "SELECT id, service_code, service_name, description, department, category, processing_days, fee_amount, is_active
+        "SELECT id, service_code, service_name, description, requirements, department, category, processing_days, fee_amount, is_active
          FROM service_types
          WHERE is_active = TRUE
          ORDER BY id ASC"

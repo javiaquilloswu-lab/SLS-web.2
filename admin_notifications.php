@@ -18,20 +18,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 $admin = requireAuthenticatedAdmin($pdo);
 
-// GET: Retrieve recent notifications sent
+// GET: Retrieve paginated notifications
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    $page  = max(1, (int)($_GET['page'] ?? 1));
+    $limit = max(1, min(100, (int)($_GET['limit'] ?? 20)));
+    $offset = ($page - 1) * $limit;
+
     try {
-        $stmt = $pdo->query(
+        $countStmt = $pdo->query('SELECT COUNT(*) FROM student_notifications');
+        $totalRecords = (int)($countStmt ? $countStmt->fetchColumn() : 0);
+        $totalPages = max(1, (int)ceil($totalRecords / $limit));
+
+        $stmt = $pdo->prepare(
             "SELECT sn.id, sn.student_id, sn.title, sn.body, sn.category, sn.status_tag, sn.is_unread, sn.created_at,
                     s.first_name || ' ' || s.last_name as student_name
              FROM student_notifications sn
              LEFT JOIN students s ON sn.student_id = s.student_id
              ORDER BY sn.id DESC
-             LIMIT 100"
+             LIMIT {$limit} OFFSET {$offset}"
         );
+        $stmt->execute();
         $notifs = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        jsonResponse(true, 'Dispatched notifications retrieved.', $notifs);
+        jsonResponse(true, 'Dispatched notifications retrieved.', [
+            'notifications' => $notifs,
+            'pagination'    => [
+                'current_page'  => $page,
+                'per_page'      => $limit,
+                'total_records' => $totalRecords,
+                'total_pages'   => $totalPages,
+                'has_next'      => $page < $totalPages,
+                'has_prev'      => $page > 1
+            ]
+        ]);
     } catch (\PDOException $e) {
         error_log('Admin notifications GET error: ' . $e->getMessage());
         jsonResponse(false, 'Unable to query notifications.', null, 500);

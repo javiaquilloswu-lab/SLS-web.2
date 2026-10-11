@@ -33,6 +33,7 @@ CREATE INDEX IF NOT EXISTS idx_students_email ON students(email);
 CREATE TABLE IF NOT EXISTS student_documents (
     id SERIAL PRIMARY KEY,
     student_id VARCHAR(50) NOT NULL,
+    request_id INT NULL REFERENCES student_requests(id) ON DELETE SET NULL,
     document_type VARCHAR(100) NOT NULL,
     original_filename VARCHAR(255) NOT NULL,
     stored_filename VARCHAR(255) NOT NULL,
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS student_documents (
     mime_type VARCHAR(50) NOT NULL,
     file_size_bytes INT NOT NULL,
     status VARCHAR(30) DEFAULT 'Pending Review',
+    is_current BOOLEAN DEFAULT TRUE,
     reviewed_by VARCHAR(100),
     reviewed_at TIMESTAMP WITH TIME ZONE,
     admin_notes TEXT,
@@ -47,6 +49,8 @@ CREATE TABLE IF NOT EXISTS student_documents (
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_student_id ON student_documents(student_id);
+CREATE INDEX IF NOT EXISTS idx_documents_request_id ON student_documents(request_id);
+CREATE INDEX IF NOT EXISTS idx_documents_is_current ON student_documents(is_current);
 
 -- 3. Student Requests & Document Pickups Table
 CREATE TABLE IF NOT EXISTS student_requests (
@@ -162,6 +166,7 @@ CREATE TABLE IF NOT EXISTS scholarships (
     code VARCHAR(50) UNIQUE NOT NULL,
     title VARCHAR(150) NOT NULL,
     description TEXT,
+    requirements TEXT,
     academic_year VARCHAR(50) NOT NULL,
     deadline VARCHAR(50),
     stipend_amount VARCHAR(50) DEFAULT '₱30,000.00',
@@ -177,6 +182,7 @@ CREATE TABLE IF NOT EXISTS service_types (
     service_code VARCHAR(50) UNIQUE NOT NULL,
     service_name VARCHAR(150) NOT NULL,
     description TEXT,
+    requirements TEXT,
     department VARCHAR(100) DEFAULT 'University Registrar',
     category VARCHAR(50) DEFAULT 'Document',
     processing_days VARCHAR(50) DEFAULT '2-3 Business Days',

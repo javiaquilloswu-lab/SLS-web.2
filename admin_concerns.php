@@ -84,29 +84,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             jsonResponse(false, 'Unable to query conversation detail.', null, 500);
         }
     } else {
-        // List all concerns
+        // List all concerns with pagination and search/status filtering
         $filterStatus = trim((string)($_GET['status'] ?? ''));
+        $search       = trim((string)($_GET['search'] ?? ''));
+
+        $page  = max(1, (int)($_GET['page'] ?? 1));
+        $limit = max(1, min(100, (int)($_GET['limit'] ?? 20)));
+        $offset = ($page - 1) * $limit;
+
         try {
+            $whereSql = " WHERE 1=1";
+            $params = [];
+
+            if ($filterStatus !== '' && strtolower($filterStatus) !== 'all') {
+                $whereSql .= " AND sc.status ILIKE ?";
+                $params[] = "%{$filterStatus}%";
+            }
+
+            if ($search !== '') {
+                $whereSql .= " AND (s.first_name ILIKE ? OR s.last_name ILIKE ? OR sc.student_id ILIKE ? OR sc.ticket_ref ILIKE ? OR sc.message ILIKE ?)";
+                $searchTerm = "%{$search}%";
+                $params[] = $searchTerm;
+                $params[] = $searchTerm;
+                $params[] = $searchTerm;
+                $params[] = $searchTerm;
+                $params[] = $searchTerm;
+            }
+
+            $countStmt = $pdo->prepare("SELECT COUNT(*) FROM student_concerns sc LEFT JOIN students s ON sc.student_id = s.student_id {$whereSql}");
+            $countStmt->execute($params);
+            $totalRecords = (int)$countStmt->fetchColumn();
+            $totalPages = max(1, (int)ceil($totalRecords / $limit));
+
             $sql = "SELECT sc.id, sc.student_id, sc.ticket_ref, sc.message, sc.category, sc.response,
                            sc.status, sc.responded_by, sc.responded_at, sc.internal_notes,
                            sc.assigned_to, sc.escalation_reason, sc.is_ai_paused, sc.created_at, sc.updated_at,
                            s.first_name || ' ' || s.last_name as student_name, s.course, s.year_level
                     FROM student_concerns sc
-                    LEFT JOIN students s ON sc.student_id = s.student_id";
-            $params = [];
-
-            if ($filterStatus !== '' && strtolower($filterStatus) !== 'all') {
-                $sql .= " WHERE sc.status ILIKE ?";
-                $params[] = "%{$filterStatus}%";
-            }
-
-            $sql .= " ORDER BY sc.id DESC";
+                    LEFT JOIN students s ON sc.student_id = s.student_id
+                    {$whereSql}
+                    ORDER BY sc.id DESC
+                    LIMIT {$limit} OFFSET {$offset}";
 
             $stmt = $pdo->prepare($sql);
             $stmt->execute($params);
             $concerns = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-            jsonResponse(true, 'Conversations list retrieved.', $concerns);
+            jsonResponse(true, 'Conversations list retrieved.', [
+                'concerns'   => $concerns,
+                'pagination' => [
+                    'current_page'  => $page,
+                    'per_page'      => $limit,
+                    'total_records' => $totalRecords,
+                    'total_pages'   => $totalPages,
+                    'has_next'      => $page < $totalPages,
+                    'has_prev'      => $page > 1
+                ]
+            ]);
         } catch (\PDOException $e) {
             error_log('Admin concerns list error: ' . $e->getMessage());
             jsonResponse(false, 'Unable to query conversations list.', null, 500);

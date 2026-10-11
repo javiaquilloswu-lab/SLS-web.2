@@ -32,6 +32,11 @@ if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
     jsonResponse(false, 'Invalid email format.', null, 422);
 }
 
+$lowerEmail = strtolower($email);
+if (!str_ends_with($lowerEmail, '@swu.edu.ph') && !str_ends_with($lowerEmail, '@phinmaed.com') && !str_ends_with($lowerEmail, '@swu.phinma.edu.ph')) {
+    jsonResponse(false, 'Registration is restricted to official university email addresses (@swu.edu.ph or @phinmaed.com).', null, 422);
+}
+
 try {
     // Check for duplicate student_id or email
     $checkStmt = $pdo->prepare('SELECT id FROM students WHERE email = ? OR student_id = ?');

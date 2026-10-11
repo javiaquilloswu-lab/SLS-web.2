@@ -34,6 +34,91 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $stmt->execute($params);
         $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+        // Pre-fetch all active service types & requirements JSON
+        $srvStmt = $pdo->query("SELECT service_code, service_name, requirements FROM service_types WHERE is_active = TRUE");
+        $serviceTypes = $srvStmt ? $srvStmt->fetchAll(PDO::FETCH_ASSOC) : [];
+
+        // Pre-fetch all current non-rejected student documents with request_id scoping
+        $docStmt = $pdo->prepare(
+            "SELECT request_id, LOWER(document_type) as doc_type
+             FROM student_documents
+             WHERE student_id = ? AND (is_current IS NULL OR is_current = TRUE) AND (status IS NULL OR LOWER(status) != 'rejected')"
+        );
+        $docStmt->execute([$studentId]);
+        $allStudentDocs = $docStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Calculate submitted vs total required items for each request
+        foreach ($results as &$req) {
+            $reqId = (int)$req['id'];
+            $title = $req['title'] ?? '';
+            $matchedReqsJson = null;
+
+            // Scope document list to those uploaded specifically for this request_id or legacy NULL request_id
+            $uploadedDocs = [];
+            foreach ($allStudentDocs as $dRow) {
+                $docReqId = $dRow['request_id'] !== null ? (int)$dRow['request_id'] : null;
+                if ($docReqId === $reqId || $docReqId === null) {
+                    $uploadedDocs[] = $dRow['doc_type'];
+                }
+            }
+
+            foreach ($serviceTypes as $st) {
+                $sName = $st['service_name'] ?? '';
+                $sCode = $st['service_code'] ?? '';
+                if (stripos($title, $sName) !== false || stripos($sName, $title) !== false || stripos($title, $sCode) !== false) {
+                    $matchedReqsJson = $st['requirements'] ?? null;
+                    break;
+                }
+            }
+
+            $totalReqs = 0;
+            $submittedReqs = 0;
+
+            if (!empty($matchedReqsJson)) {
+                $reqList = json_decode($matchedReqsJson, true);
+                if (is_array($reqList)) {
+                    foreach ($reqList as $rItem) {
+                        $isConditional = isset($rItem['conditional']) && (bool)$rItem['conditional'];
+                        // Only mandatory requirements count toward denominator
+                        if (!$isConditional) {
+                            $totalReqs++;
+                            $rName = strtolower(trim((string)($rItem['name'] ?? '')));
+
+                            $found = false;
+                            foreach ($uploadedDocs as $uDoc) {
+                                if (stripos($uDoc, $rName) !== false || stripos($rName, $uDoc) !== false) {
+                                    $found = true;
+                                    break;
+                                }
+                            }
+                            if ($found) {
+                                $submittedReqs++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fallback for requests without service requirements catalog match
+            if ($totalReqs === 0) {
+                $totalReqs = 4; // Standard baseline for default document request
+                $submittedReqs = min(count($uploadedDocs), 4);
+            }
+
+            if ($submittedReqs > $totalReqs) {
+                $submittedReqs = $totalReqs;
+            }
+
+            $progressPercent = $totalReqs > 0 ? (int)round(($submittedReqs / $totalReqs) * 100) : 100;
+            if ($progressPercent > 100) $progressPercent = 100;
+            if ($progressPercent < 0) $progressPercent = 0;
+
+            $req['submitted_reqs'] = $submittedReqs;
+            $req['total_reqs'] = $totalReqs;
+            $req['progress_percent'] = $progressPercent;
+        }
+        unset($req);
+
         jsonResponse(true, 'Requests retrieved successfully.', $results);
     } catch (\PDOException $e) {
         error_log('Failed to fetch requests: ' . $e->getMessage());
@@ -129,7 +214,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'department'       => $department,
                 'status'           => $status,
                 'status_message'   => $statusMsg,
-                'submission_date'  => date('M d, Y')
+                'submission_date'  => date('M d, Y'),
+                'submitted_reqs'   => 0,
+                'total_reqs'       => 4,
+                'progress_percent' => 0
             ], 201);
         } catch (\PDOException $e) {
             error_log('Failed to create request: ' . $e->getMessage());
